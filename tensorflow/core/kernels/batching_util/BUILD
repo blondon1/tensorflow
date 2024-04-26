@@ -127,6 +127,10 @@ cc_library(
     hdrs = ["batch_scheduler_utils.h"],
     deps = [
         "//tensorflow/core:portable_gif_internal",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
