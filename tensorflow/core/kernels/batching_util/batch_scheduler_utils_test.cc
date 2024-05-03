@@ -15,7 +15,14 @@ limitations under the License.
 
 #include "tensorflow/core/kernels/batching_util/batch_scheduler_utils.h"
 
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <vector>
+
 #include <gtest/gtest.h>
+#include "absl/flags/flag.h"
+#include "tensorflow/core/kernels/batching_util/batch_scheduler.h"
 
 namespace tensorflow {
 namespace serving {
@@ -40,6 +47,174 @@ TEST(GetNextAllowedBatchSizeTest, AlreadyAllowedBatchSize) {
 
 TEST(GetNextAllowedBatchSizeTest, GreaterThanAllowedBatchSize) {
   EXPECT_EQ(GetNextAllowedBatchSize(10, {2, 4, 8}, false), 10);
+}
+
+TEST(GetPrevAllowedBatchSizeTest, PaddingDisallowed) {
+  EXPECT_EQ(GetPrevAllowedBatchSize(3, {2, 4, 8}, true), 3);
+}
+
+TEST(GetPrevAllowedBatchSizeTest, EmptyAllowedBatchSizes) {
+  EXPECT_EQ(GetPrevAllowedBatchSize(3, {}, false), 3);
+}
+
+TEST(GetPrevAllowedBatchSizeTest, PrevAllowedBatchSizeFound) {
+  EXPECT_EQ(GetPrevAllowedBatchSize(3, {1, 2, 4, 8}, false), 2);
+}
+
+TEST(GetPrevAllowedBatchSizeTest, NoSmallerAllowedBatchSizeFound) {
+  EXPECT_EQ(GetPrevAllowedBatchSize(3, {4, 8}, false), 3);
+}
+
+TEST(GetPrevAllowedBatchSizeTest, AlreadyAllowedBatchSize) {
+  EXPECT_EQ(GetPrevAllowedBatchSize(2, {1, 2, 4, 8}, false), 2);
+}
+
+TEST(GetPrevAllowedBatchSizeTest, GreaterThanMaxAllowedBatchSize) {
+  EXPECT_EQ(GetPrevAllowedBatchSize(10, {2, 4, 8}, false), 8);
+}
+
+TEST(BatchPaddingPolicyTest, AbslParseFlag) {
+  std::string error;
+  BatchPaddingPolicy policy;
+
+  EXPECT_TRUE(AbslParseFlag("PAD_UP", &policy, &error));
+  EXPECT_EQ(policy, BatchPaddingPolicy::kPadUp);
+  EXPECT_EQ(error, "");
+
+  EXPECT_TRUE(AbslParseFlag("BATCH_DOWN", &policy, &error));
+  EXPECT_EQ(policy, BatchPaddingPolicy::kBatchDown);
+  EXPECT_EQ(error, "");
+
+  EXPECT_TRUE(AbslParseFlag("MINIMIZE_TPU_COST_PER_REQUEST", &policy, &error));
+  EXPECT_EQ(policy, BatchPaddingPolicy::kMinimizeTpuCostPerRequest);
+  EXPECT_EQ(error, "");
+
+  EXPECT_FALSE(AbslParseFlag("cucumber", &policy, &error));
+  EXPECT_NE(error, "");
+}
+
+TEST(BatchPaddingPolicyTest, AbslUnparseFlag) {
+  EXPECT_EQ(AbslUnparseFlag(BatchPaddingPolicy::kPadUp), "PAD_UP");
+  EXPECT_EQ(AbslUnparseFlag(BatchPaddingPolicy::kBatchDown), "BATCH_DOWN");
+  EXPECT_EQ(AbslUnparseFlag(BatchPaddingPolicy::kMinimizeTpuCostPerRequest),
+            "MINIMIZE_TPU_COST_PER_REQUEST");
+}
+
+class FakeTask : public BatchTask {
+ public:
+  explicit FakeTask(size_t size) : size_(size) {}
+
+  size_t size() const override { return size_; }
+
+ private:
+  const size_t size_;
+};
+
+TEST(MaybeBatchDownTest, PadUp) {
+  absl::SetFlag(&FLAGS_tensorflow_batch_padding_policy,
+                BatchPaddingPolicy::kPadUp);
+
+  Batch<FakeTask> batch;
+  batch.AddTask(std::make_unique<FakeTask>(1));
+  batch.AddTask(std::make_unique<FakeTask>(1));
+  batch.AddTask(std::make_unique<FakeTask>(1));
+  batch.Close();
+
+  std::vector<std::unique_ptr<FakeTask>> out_trimmed_tasks;
+
+  MaybeBatchDown(
+      /* batch= */ batch, /* allowed_batch_sizes= */ {1, 2, 4, 8},
+      /* disable_padding= */ false, /* out_trimmed_tasks= */ out_trimmed_tasks);
+
+  // The batch must stay unchanged (for the batch resource to then pad it to the
+  // next allowed batch size, thus ending up in a pad-up behavior.)
+  EXPECT_EQ(batch.size(), 3);
+}
+
+TEST(MaybeBatchDownTest, BatchDown) {
+  absl::SetFlag(&FLAGS_tensorflow_batch_padding_policy,
+                BatchPaddingPolicy::kBatchDown);
+
+  Batch<FakeTask> batch;
+  batch.AddTask(std::make_unique<FakeTask>(1));
+  batch.AddTask(std::make_unique<FakeTask>(1));
+  batch.AddTask(std::make_unique<FakeTask>(1));
+  batch.Close();
+
+  std::vector<std::unique_ptr<FakeTask>> out_trimmed_tasks;
+
+  MaybeBatchDown(
+      /* batch= */ batch, /* allowed_batch_sizes= */ {1, 2, 4, 8},
+      /* disable_padding= */ false, /* out_trimmed_tasks= */ out_trimmed_tasks);
+
+  // The scheduler should trim the batch to a smaller allowed size that requires
+  // no padding.
+  EXPECT_EQ(batch.size(), 2);
+  // The trimmed part.
+  EXPECT_EQ(out_trimmed_tasks.size(), 1);
+}
+
+TEST(MaybeBatchDownTest, BatchDownDoesNotSplitTasks) {
+  absl::SetFlag(&FLAGS_tensorflow_batch_padding_policy,
+                BatchPaddingPolicy::kBatchDown);
+
+  // Add tasks for size 3, but the second task is large and will have to be
+  // split if doing batch-down.
+  Batch<FakeTask> batch;
+  batch.AddTask(std::make_unique<FakeTask>(1));
+  batch.AddTask(std::make_unique<FakeTask>(2));
+  batch.Close();
+
+  std::vector<std::unique_ptr<FakeTask>> out_trimmed_tasks;
+
+  MaybeBatchDown(
+      /* batch= */ batch, /* allowed_batch_sizes= */ {1, 2, 4, 8},
+      /* disable_padding= */ false, /* out_trimmed_tasks= */ out_trimmed_tasks);
+
+  // The batch must stay unchanged due the fact that the current implementation
+  // doesn's support splitting large tasks.
+  EXPECT_EQ(batch.size(), 3);
+}
+
+TEST(MaybeBatchDownTest, BatchDownDoesNothingWhenTheBatchSizeIsAlreadyAllowed) {
+  absl::SetFlag(&FLAGS_tensorflow_batch_padding_policy,
+                BatchPaddingPolicy::kBatchDown);
+
+  Batch<FakeTask> batch;
+  batch.AddTask(std::make_unique<FakeTask>(1));
+  batch.AddTask(std::make_unique<FakeTask>(1));
+  batch.AddTask(std::make_unique<FakeTask>(1));
+  batch.AddTask(std::make_unique<FakeTask>(1));
+  batch.Close();
+
+  std::vector<std::unique_ptr<FakeTask>> out_trimmed_tasks;
+
+  MaybeBatchDown(
+      /* batch= */ batch, /* allowed_batch_sizes= */ {1, 2, 4, 8},
+      /* disable_padding= */ false, /* out_trimmed_tasks= */ out_trimmed_tasks);
+
+  // The batch should stay unchanged because it's already of an allowed size.
+  EXPECT_EQ(batch.size(), 4);
+}
+
+TEST(MaybeBatchDownTest, BatchDownDoesNothingWhenNoSmallerAllowedSize) {
+  absl::SetFlag(&FLAGS_tensorflow_batch_padding_policy,
+                BatchPaddingPolicy::kBatchDown);
+
+  Batch<FakeTask> batch;
+  batch.AddTask(std::make_unique<FakeTask>(1));
+  batch.AddTask(std::make_unique<FakeTask>(1));
+  batch.AddTask(std::make_unique<FakeTask>(1));
+  batch.Close();
+
+  std::vector<std::unique_ptr<FakeTask>> out_trimmed_tasks;
+
+  MaybeBatchDown(
+      /* batch= */ batch, /* allowed_batch_sizes= */ {4, 8},
+      /* disable_padding= */ false, /* out_trimmed_tasks= */ out_trimmed_tasks);
+
+  // Can't batch down because there is no smaller allowed size.
+  EXPECT_EQ(batch.size(), 3);
 }
 
 }  // namespace
