@@ -23,6 +23,7 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/util/bad_indices_handling.h"
 #include "tensorflow/core/util/util.h"
 
 namespace tensorflow {
@@ -43,10 +44,10 @@ struct GatherNdSlice {
                    typename TTypes<T>::Matrix Tout);
 };
 
-template <typename Device, typename T, typename Index,
-          bool kDropBadIndices = false>
-Status DoGatherNd(OpKernelContext* c, const Tensor& params,
-                  const Tensor& indices, Tensor* out) {
+template <typename Device, typename T, typename Index>
+Status DoGatherNd(
+    OpKernelContext* c, const Tensor& params, const Tensor& indices,
+    Tensor* out, BadIndicesOnCpu bad_indices_on_cpu = BadIndicesOnCpu::kError) {
   if (!TensorShapeUtils::IsVectorOrHigher(params.shape())) {
     return errors::InvalidArgument("params must be at least a vector");
   }
@@ -152,12 +153,8 @@ Status DoGatherNd(OpKernelContext* c, const Tensor& params,
             indices_nd);
     }
 
-    if constexpr (kDropBadIndices) {
-      return absl::OkStatus();
-    }
-
     // bad_i will only return >= 0 on CPUs right now.
-    if (bad_i >= 0) {
+    if (bad_indices_on_cpu == BadIndicesOnCpu::kError && bad_i >= 0) {
       auto shape = indices.shape();
       shape.RemoveLastDims(1);
       return errors::InvalidArgument(

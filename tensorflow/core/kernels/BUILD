@@ -65,7 +65,6 @@ package_group(
     packages = [
         "//tensorflow/...",
         "//tensorflow_text/...",
-        "//waymo/ml/compiler/frontend/kernels/...",
         "//waymo/onboard/ml/...",
     ],
 )
@@ -892,6 +891,7 @@ ARRAY_DEPS = [
     "//tensorflow/core:protos_all_cc",
     "//tensorflow/core/framework:bounds_check",
     "//tensorflow/core/profiler/lib:scoped_memory_debug_annotation",
+    "//tensorflow/core/util:bad_indices_handling",
     "@eigen_archive//:eigen3",
 ]
 
@@ -2946,6 +2946,7 @@ tf_kernel_library(
         "//tensorflow/core:lib",
         "//tensorflow/core:lib_internal",
         "//tensorflow/core/framework:bounds_check",
+        "//tensorflow/core/util:bad_indices_handling",
         "//tensorflow/core/util:determinism_for_kernels",
         "@com_google_absl//absl/strings",
     ],
@@ -6501,6 +6502,8 @@ filegroup(
         "//tensorflow/c/kernels:portable_all_op_kernels",
         "//tensorflow/core/kernels/image:non_max_suppression_op.cc",
         "//tensorflow/core/kernels/image:non_max_suppression_op.h",
+        "//tensorflow/core/util:bad_indices_handling.cc",
+        "//tensorflow/core/util:bad_indices_handling.h",
     ],
 )
 
@@ -6633,6 +6636,7 @@ filegroup(
         "//tensorflow/core/kernels/linalg:matrix_triangular_solve_op_impl.h",
         "//tensorflow/core/kernels/linalg:qr_op_impl.h",
         "//tensorflow/core/kernels/uniform_quant_ops:portable_all_op_kernels_headers",
+        "//tensorflow/core/util:bad_indices_handling.h",
         "//tensorflow/core/util:image_resizer_state.h",
     ],
 )
@@ -6997,6 +7001,7 @@ filegroup(
         "//tensorflow/core/kernels/linalg:qr_op_double.cc",
         "//tensorflow/core/kernels/linalg:qr_op_float.cc",
         "//tensorflow/core/kernels/linalg:qr_op_half.cc",
+        "//tensorflow/core/util:bad_indices_handling.h",
     ],
 )
 
@@ -7031,6 +7036,8 @@ filegroup(
 )
 
 ANDROID_TEXTUAL_HDRS = [
+    "//tensorflow/core/util:bad_indices_handling.h",
+    "//tensorflow/core/util:bad_indices_handling.cc",
     "@local_tsl//tsl/framework/convolution:eigen_convolution_helpers.h",
     "@local_tsl//tsl/framework/convolution:eigen_spatial_convolutions-inl.h",
     "gather_nd_op_cpu_impl.h",

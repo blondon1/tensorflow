@@ -18,12 +18,16 @@ limitations under the License.
 
 #include "tensorflow/core/kernels/gather_nd_op.h"
 
+#include <string>
+
 #include "tensorflow/core/framework/bounds_check.h"
+#include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/mem.h"
 #include "tensorflow/core/platform/types.h"
+#include "tensorflow/core/util/bad_indices_handling.h"
 
 namespace tensorflow {
 
@@ -37,6 +41,12 @@ class GatherNdOp : public OpKernel {
     const DataType dt = DataTypeToEnum<T>::v();
     const DataType index_t = DataTypeToEnum<Index>::v();
     OP_REQUIRES_OK(c, c->MatchSignature({dt, index_t}, {dt}));
+    if (c->HasAttr("bad_indices_on_cpu")) {
+      std::string bad_indices_on_cpu_str;
+      OP_REQUIRES_OK(c,
+                     c->GetAttr("bad_indices_on_cpu", &bad_indices_on_cpu_str));
+      bad_indices_on_cpu_ = BadIndicesOnCpuFromString(bad_indices_on_cpu_str);
+    }
   }
 
   void Compute(OpKernelContext* c) override {
@@ -44,19 +54,24 @@ class GatherNdOp : public OpKernel {
     const Tensor& indices = c->input(1);
 
     Tensor out;
-    OP_REQUIRES_OK(
-        c, functor::DoGatherNd<Device, T, Index, /*kDropBadIndices=*/false>(
-               c, params, indices, &out));
+    OP_REQUIRES_OK(c, functor::DoGatherNd<Device, T, Index>(
+                          c, params, indices, &out, bad_indices_on_cpu_));
     c->set_output(0, out);
   }
+
+ private:
+  BadIndicesOnCpu bad_indices_on_cpu_;
 };
 
-#define REGISTER_GATHER_ND_FULL(dev, type, index_type)                 \
-  REGISTER_KERNEL_BUILDER(Name("GatherNd")                             \
-                              .Device(DEVICE_##dev)                    \
-                              .TypeConstraint<type>("Tparams")         \
-                              .TypeConstraint<index_type>("Tindices"), \
-                          GatherNdOp<dev##Device, type, index_type>)
+#define REGISTER_GATHER_ND_FULL(dev, type, index_type)           \
+  REGISTER_KERNEL_BUILDER(                                       \
+      Name("GatherNd")                                           \
+          .Device(DEVICE_##dev)                                  \
+          .TypeConstraint<type>("Tparams")                       \
+          .TypeConstraint<index_type>("Tindices")                \
+          .AttrConstraint<std::string>("bad_indices_on_cpu",     \
+                                       {"", "error", "ignore"}), \
+      GatherNdOp<dev##Device, type, index_type>)
 
 #define REGISTER_GATHER_ND_CPU(type)         \
   REGISTER_GATHER_ND_FULL(CPU, type, int16); \

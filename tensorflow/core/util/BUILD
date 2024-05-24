@@ -45,6 +45,8 @@ package(
 # List of exported source files.
 exports_files(
     srcs = [
+        "bad_indices_handling.cc",
+        "bad_indices_handling.h",
         "event.proto",
         "example_proto_fast_parsing_test.proto",
         "image_resizer_state.h",
@@ -1024,5 +1026,15 @@ tf_proto_library(
     visibility = [
         "//tensorflow/core:__subpackages__",
         "@local_tsl//tsl:__subpackages__",
+    ],
+)
+
+cc_library(
+    name = "bad_indices_handling",
+    srcs = ["bad_indices_handling.cc"],
+    hdrs = ["bad_indices_handling.h"],
+    deps = [
+        "//tensorflow/core/platform:logging",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
